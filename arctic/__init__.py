@@ -25,9 +25,13 @@
 # *
 # **************************************************************************
 import os
+import shutil
+from os.path import exists
+
 import pwem
 from arctic.constants import ARCTIC_CUDA_LIB, V_0_0_1, ARCTIC_ENV_ACTIVATION, ARCTIC_DEFAULT_ACTIVATION_CMD, ARCTIC, \
-    ARCTIC_DEFAULT_VERSION, ARCTIC_GIT_REPO, ARCTIC_GIT_COMMIT
+    ARCTIC_DEFAULT_VERSION, ARCTIC_GIT_REPO_URL, ARCTIC_GIT_COMMIT, ARCTIC_REPO_DIRNAME, ARTCTIC_MODELS_URL, \
+    ARCTIC_ENV_NAME, MODELS_DIR, ARCTIC_HOME
 from pyworkflow.utils import Environ
 
 __version__ = '3.0.0'
@@ -36,12 +40,14 @@ __version__ = '3.0.0'
 
 
 class Plugin(pwem.Plugin):
+    _homeVar = ARCTIC_HOME
     _pathVars = [ARCTIC_CUDA_LIB]
     _supportedVersions = [V_0_0_1]
     _url = "https://github.com/scipion-em/scipion-em-arctic"
 
     @classmethod
     def _defineVariables(cls):
+        cls._defineEmVar(ARCTIC_HOME, f'{ARCTIC}-{ARCTIC_DEFAULT_VERSION}')
         cls._defineVar(ARCTIC_ENV_ACTIVATION, ARCTIC_DEFAULT_ACTIVATION_CMD)
         cls._defineVar(ARCTIC_CUDA_LIB, pwem.Config.CUDA_LIB)
         
@@ -61,28 +67,50 @@ class Plugin(pwem.Plugin):
 
     @classmethod
     def defineBinaries(cls, env):
-        ARCTIC_INSTALLED = '%s_%s_installed' % (ARCTIC, ARCTIC_DEFAULT_VERSION)
-        installationCmd = cls.getCondaActivationCmd()
-        # Clone the repository (not published in Pypi yet)
-        installationCmd += f'git clone {ARCTIC_GIT_REPO} && '
+        ARCTIC_CLONED = f'{ARCTIC}_cloned'
+        ARCTIC_CONDA_ENV_CREATED = f'{ARCTIC}_conda_env_created'
+        ARCTIC_MODELS_DL = f'{ARCTIC}_models_downloaded'
+        ARCTIC_INSTALLED = f'{ARCTIC}_{ARCTIC_DEFAULT_VERSION}_installed'
+        MODELS_FILE = 'models.zip'
 
-        # Checkout to the specified commit
-        installationCmd += f'git checkout {ARCTIC_GIT_COMMIT}'
+        # Clone the repository (not published in Pypi yet) and checkout to the specified commit
+        articClonedRepo = cls.getHome(ARCTIC_REPO_DIRNAME)
+        cloneCmd = f'[ -d {articClonedRepo} ] && rm -rf {articClonedRepo}; '  # Remove the cloned dir if exists
+        cloneCmd += f'git clone {ARCTIC_GIT_REPO_URL} && '
+        cloneCmd += f'cd {ARCTIC_REPO_DIRNAME} && '
+        cloneCmd += f'git checkout {ARCTIC_GIT_COMMIT} && '
+        cloneCmd += f'cd .. && touch {ARCTIC_CLONED}'
 
-        # Create the environment
-        installationCmd += ' conda env create -f environment.yml && '
+        # Create the environment or update it depending on if it already exists or not
+        createEnvCmd = f'{cls.getCondaActivationCmd()}'
+        createEnvCmd += f'cd {ARCTIC_REPO_DIRNAME} && '
+        createEnvCmd += (f" conda env list | grep -qE '^{ARCTIC_ENV_NAME}\s' && "
+                         f"conda env update -f environment.yml || conda env create -f environment.yml && ")
+        createEnvCmd += f'cd .. && touch {ARCTIC_CONDA_ENV_CREATED}'
+
+        # Download the models
+        dlModelsCmd = f'cd {ARCTIC_REPO_DIRNAME} && '
+        dlModelsCmd += f'wget -O {MODELS_FILE} {ARTCTIC_MODELS_URL} && '
+        dlModelsCmd += f'unzip {MODELS_FILE} && '
+        dlModelsCmd += f'rm {MODELS_FILE} && '
+        dlModelsCmd += f'mv {ARCTIC_REPO_DIRNAME} {MODELS_DIR} && '  # Models dir were unzipped as ARCTiC
+        dlModelsCmd+= f'cd .. && touch {ARCTIC_MODELS_DL}'
 
         # Flag installation finished
-        installationCmd += 'touch %s' % ARCTIC_INSTALLED
+        installationCmd = [
+            (cloneCmd, ARCTIC_CLONED),
+            (createEnvCmd, ARCTIC_CONDA_ENV_CREATED),
+            (dlModelsCmd, ARCTIC_MODELS_DL),
+            (f'touch {ARCTIC_INSTALLED}', ARCTIC_INSTALLED)
+        ]
 
-        ARCTIC_commands = [(installationCmd, ARCTIC_INSTALLED)]
         envPath = os.environ.get('PATH', "")  # keep path since conda likely in there
         installEnvVars = {'PATH': envPath} if envPath else None
 
         env.addPackage(ARCTIC,
                        version=ARCTIC_DEFAULT_VERSION,
                        tar='void.tgz',
-                       commands=ARCTIC_commands,
+                       commands=installationCmd,
                        neededProgs=cls.getDependencies(),
                        vars=installEnvVars,
                        default=True)
@@ -91,7 +119,7 @@ class Plugin(pwem.Plugin):
     def getDependencies(cls):
         # try to get CONDA activation command
         condaActivationCmd = cls.getCondaActivationCmd()
-        neededProgs = []
+        neededProgs = ['unzip']
         if not condaActivationCmd:
             neededProgs.append('conda')
         return neededProgs

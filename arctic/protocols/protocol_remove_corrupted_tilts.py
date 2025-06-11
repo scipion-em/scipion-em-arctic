@@ -29,9 +29,14 @@ from enum import Enum
 
 from pwem.protocols import EMProtocol
 from pyworkflow import BETA
+from pyworkflow.protocol import PointerParam, BooleanParam, LEVEL_ADVANCED
+from pyworkflow.utils import Message
 from tomo.objects import SetOfTiltSeries
 
 logger = logging.getLogger(__name__)
+# Form variables
+IN_TS_SET = 'inTsSet'
+RE_STACK_OUT_TS = 'reStackOutTsSet'
 
 
 class arcticOutputs(Enum):
@@ -50,3 +55,18 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+
+    # --------------------------- DEFINE param functions ----------------------
+    def _defineParams(self, form):
+        form.addSection(label=Message.LABEL_INPUT)
+        form.addParam(IN_TS_SET, PointerParam,
+                      pointerClass='SetOfTiltSeries',
+                      important=True,
+                      label='Tilt-Series')
+        form.addParam(RE_STACK_OUT_TS, BooleanParam,
+                      default=False,
+                      label='Re-stack the output tilt-series?',
+                      expertLevel=LEVEL_ADVANCED,
+                      help='If set to No, the output tilt-series will be mark the bad tilt-images at metadata '
+                           'level. Otherwise, a new binary will be generated for each tilt-series containing only '
+                           'the good tilt-images.')

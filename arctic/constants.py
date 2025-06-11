@@ -27,14 +27,17 @@
 
 ARCTIC = 'arctic'
 ARCTIC_HOME = 'ARCTIC_HOME'
-ARCTIC_GIT_REPO = 'https://github.com/turonova/ARCTiC.git'
+ARCTIC_REPO_DIRNAME = 'ARCTiC'
+ARCTIC_GIT_REPO_URL = 'https://github.com/turonova/ARCTiC.git'
 ARCTIC_GIT_COMMIT = '9d8e22df79329c66bcd489b4d65a7e993a3ab3a4'  # SHA of commit on May 27, 2025
+ARTCTIC_MODELS_URL = 'https://oc.biophys.mpg.de/owncloud/s/zmMZPr2TEB4Bwda/download'
+MODELS_DIR = 'models'
 
 # Supported versions
 V_0_0_1 = '0.0.1'
 ARCTIC_DEFAULT_VERSION = V_0_0_1
 
-ARCTIC_ENV_NAME = '%s-%s' % (ARCTIC, ARCTIC_DEFAULT_VERSION)
+ARCTIC_ENV_NAME = 'arctic'
 ARCTIC_ENV_ACTIVATION = 'ARCTIC_ENV_ACTIVATION'
 ARCTIC_DEFAULT_ACTIVATION_CMD = 'conda activate %s' % ARCTIC_ENV_NAME
 ARCTIC_CUDA_LIB = 'ARCTIC_CUDA_LIB'
