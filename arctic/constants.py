@@ -31,7 +31,8 @@ ARCTIC_REPO_DIRNAME = 'ARCTiC'
 ARCTIC_GIT_REPO_URL = 'https://github.com/turonova/ARCTiC.git'
 ARCTIC_GIT_COMMIT = '9d8e22df79329c66bcd489b4d65a7e993a3ab3a4'  # SHA of commit on May 27, 2025
 ARTCTIC_MODELS_URL = 'https://oc.biophys.mpg.de/owncloud/s/zmMZPr2TEB4Bwda/download'
-MODELS_DIR = 'models'
+MODELS_PARENT_DIR = 'models'
+BINARY_MODELS_DIR = 'binary_models'
 
 # Supported versions
 V_0_0_1 = '0.0.1'

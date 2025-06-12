@@ -31,10 +31,14 @@ from os.path import exists
 import pwem
 from arctic.constants import ARCTIC_CUDA_LIB, V_0_0_1, ARCTIC_ENV_ACTIVATION, ARCTIC_DEFAULT_ACTIVATION_CMD, ARCTIC, \
     ARCTIC_DEFAULT_VERSION, ARCTIC_GIT_REPO_URL, ARCTIC_GIT_COMMIT, ARCTIC_REPO_DIRNAME, ARTCTIC_MODELS_URL, \
-    ARCTIC_ENV_NAME, MODELS_DIR, ARCTIC_HOME
+    ARCTIC_ENV_NAME, MODELS_PARENT_DIR, ARCTIC_HOME
 from pyworkflow.utils import Environ
 
 __version__ = '3.0.0'
+
+from scipion.constants import PYTHON
+
+
 # _logo = "icon.png"
 # _references = ['']
 
@@ -93,7 +97,7 @@ class Plugin(pwem.Plugin):
         dlModelsCmd += f'wget -O {MODELS_FILE} {ARTCTIC_MODELS_URL} && '
         dlModelsCmd += f'unzip {MODELS_FILE} && '
         dlModelsCmd += f'rm {MODELS_FILE} && '
-        dlModelsCmd += f'mv {ARCTIC_REPO_DIRNAME} {MODELS_DIR} && '  # Models dir were unzipped as ARCTiC
+        dlModelsCmd += f'mv {ARCTIC_REPO_DIRNAME} {MODELS_PARENT_DIR} && '  # Models dir were unzipped as ARCTiC
         dlModelsCmd+= f'cd .. && touch {ARCTIC_MODELS_DL}'
 
         # Flag installation finished
@@ -125,10 +129,11 @@ class Plugin(pwem.Plugin):
         return neededProgs
 
     @classmethod
-    def runArctic(cls, protocol, args, cwd=None, numberOfMpi=1):
+    def runArctic(cls, protocol, program, args, cwd=None, numberOfMpi=1):
         """ Run arctic command from a given protocol. """
         cmd = cls.getCondaActivationCmd() + " "
         cmd += cls.getArcticEnvActivation()
-        cmd += f" && CUDA_VISIBLE_DEVICES=%(GPU)s {ARCTIC} "
+        cmd += f" && CUDA_VISIBLE_DEVICES=%(GPU)s"
+        cmd += f" && {PYTHON} {program} "
         protocol.runJob(cmd, args, env=cls.getEnviron(), cwd=cwd, numberOfMpi=numberOfMpi)
 
