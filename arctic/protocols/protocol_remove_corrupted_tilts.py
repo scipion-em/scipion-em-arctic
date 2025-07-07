@@ -24,6 +24,7 @@
 # *  e-mail address 'scipion@cnb.csic.es'
 # *
 # **************************************************************************
+import csv
 import logging
 from collections import OrderedDict
 from enum import Enum
@@ -34,11 +35,11 @@ from arctic import Plugin, ARCTIC_REPO_DIRNAME, MODELS_PARENT_DIR
 from arctic.constants import BINARY_MODELS_DIR
 from pwem.protocols import EMProtocol
 from pyworkflow import BETA
-from pyworkflow.object import Pointer
+from pyworkflow.object import Pointer, Set
 from pyworkflow.protocol import PointerParam, BooleanParam, LEVEL_ADVANCED, EnumParam, STEPS_PARALLEL, GPU_LIST, \
-    StringParam
-from pyworkflow.utils import Message, makePath
-from tomo.objects import SetOfTiltSeries
+    StringParam, IntParam, GE, LE
+from pyworkflow.utils import Message, makePath, redStr, cyanStr
+from tomo.objects import SetOfTiltSeries, TiltImage, TiltSeries
 
 logger = logging.getLogger(__name__)
 
@@ -67,12 +68,18 @@ modelsBinaryClFn = {
     modelsBinaryCl[RESNET_50]: 'resnet50_fine-tuned.pth'
 }
 
+# CSV report column names
+CURRENT_INDEX = 'CurrentIndex'
+TO_BE_REMOVED = 'ToBeRemoved'
+REMOVED = 'Removed'
+
 # Other vars
 PDF_REPORT_DIR = 'reports'
 
 
-class arcticOutputs(Enum):
-    tiltSeries = SetOfTiltSeries
+class ArcticOutputs(Enum):
+    tiltSeries = SetOfTiltSeries()
+    badTiltSeries = SetOfTiltSeries()
 
 
 class ProtArcticRemoveCorruptedTilts(EMProtocol):
@@ -83,13 +90,14 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
 
     _label = 'automated removal of corrupted tilts'
     _devStatus = BETA
-    _possibleOutputs = arcticOutputs
+    _possibleOutputs = ArcticOutputs
     stepsExecutionMode = STEPS_PARALLEL
     program = 'run_TS_cleaning.py'
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.tsDict = None
+        self.failedTsIds = []
 
     # --------------------------- DEFINE param functions ----------------------
     def _defineParams(self, form):
@@ -105,6 +113,20 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
                       help='If set to No, the output tilt-series will be mark the bad tilt-images at metadata '
                            'level. Otherwise, a new binary will be generated for each tilt-series containing only '
                            'the good tilt-images.')
+
+        form.addParam('noGoPercent', IntParam,
+                      default=50,
+                      label='Allowed percentage of bad tilt-images',
+                      validators=[GE(0), LE(100)],
+                      help="Percentage, in range [0, 100], of bad tilt-images, per tilt-series, allowed to consider "
+                           "a tilt-series to be acceptable. "
+                           "\n\nFor example, if a tilt-series has 40 tilt-images, the "
+                           "percentage is 50 and the number of tilt-images excluded by the program is greater than "
+                           "20 (which is the 50% of 40), the corresponding tilt-series will be part of the output "
+                           "called 'badTiltSeries' without any change."
+                           "\n\nOn the other side, if the number of tilt-images excluded by the program is lower or "
+                           "equal to 20, the corresponding tilt-series will appear in the output called 'tiltSeries', "
+                           "considering the results of the program.")
 
         form.addParam(GEN_PDF_REPOS, BooleanParam,
                       default=True,
@@ -141,6 +163,7 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
                        help='GPU device/s to be used.')
         form.addParallelSection(threads=1, mpi=0)
 
+    # TODO: add excluded views at the beginning
     # --------------------------- INSERT steps functions ----------------------
     def _insertAllSteps(self):
         self._initialize()
@@ -165,10 +188,66 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
             makePath(self._getPdfReportDir())
 
     def runArctic(self, tsId: str):
-        Plugin.runArctic(self, self._getProgram(), self._getArcticCmd(tsId))
+        try:
+            logger.info(cyanStr(f'tsId = {tsId} -> Running ARCTiC...'))
+            Plugin.runArctic(self, self._getProgram(), self._getArcticCmd(tsId))
+        except Exception as e:
+            self.failedTsIds.append(tsId)
+            logger.error(redStr(f'tsId = {tsId} - Failed to process with exception {e}'))
 
     def createOutputStep(self, tsId: str):
-        ts = self.tsDict[tsId]
+        if tsId not in self.failedTsIds:
+            ts = self.tsDict[tsId]
+            # Read the corresponding csv file
+            resDict = self._readCsvreport(tsId)
+            if resDict:
+                indices = resDict.keys()
+                toBeRemovedList = resDict.values()
+                # Check the percentage of bad tilt-images
+                nImgs = len(indices)
+                nBadTi = sum(toBeRemovedList)
+                allowedNBadTilts = round(0.01 * self.noGoPercent.get() * nImgs)
+                if nBadTi > allowedNBadTilts:
+                    logger.info(cyanStr(f'tsId = {tsId} -> too many bad tilt-images detected [{nBadTi} > '
+                                        f'{allowedNBadTilts}]. Stored as bad tilt-series.'))
+                    outTsSet = self._getOutTsSet(attrName=ArcticOutputs.badTiltSeries.name)
+                    outTs = TiltSeries(tsId=tsId)
+                    outTsSet.append(outTs)
+                    # outTsFileName = ts.getFileName()
+                    for ti in ts.iterItems():
+                        outTi = TiltImage(tsId=tsId)
+                        outTi.copyInfo(ti)
+                        outTs.append(outTi)
+                    outTsSet.update(outTs)
+                    self._store(outTsSet)
+                else:
+                    logger.info(cyanStr(f'tsId = {tsId} -> bad tilt-images detected [{nBadTi} <= '
+                                        f'{allowedNBadTilts}]. Stored as good tilt-series.'))
+                    outTsSet = self._getOutTsSet(attrName=ArcticOutputs.tiltSeries.name)
+                    outTs = TiltSeries(tsId=tsId)
+                    outTsSet.append(outTs)
+                    if self._getFormValue(RE_STACK_OUT_TS):
+                        outTsFileName = self._getOutTsFileName(tsId)
+                        for ind, ti in enumerate(ts.iterItems()):
+                            goodTi = not resDict[ind]
+                            if goodTi:
+                                outTi = TiltImage(tsId=tsId)
+                                outTi.copyInfo(ti)
+                                outTi.setFileName(outTsFileName)
+                                outTs.append(ti)
+                        outTsSet.update(outTs)
+                        self._store(outTsSet)
+                    else:
+                        outTsFileName = ts.getFileName()
+                        for ind, ti in enumerate(ts.iterItems()):
+                            outTi = TiltImage(tsId=tsId)
+                            outTi.copyInfo(ti)
+                            goodTi = not resDict[ind]
+                            outTi.setEnabled(goodTi)
+                            outTi.setFileName(outTsFileName)
+                            outTs.append(ti)
+                        outTsSet.update(outTs)
+                        self._store(outTsSet)
 
     # --------------------------- UTILS functions -----------------------------
     def _getFormAttrib(self, attribName) -> Union[Pointer, BooleanParam, EnumParam, None]:
@@ -200,6 +279,30 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
     def _getPdfReportFn(self, tsId: str) -> str:
         return join(self._getPdfReportDir(), f'{tsId}.pdf')
 
+    def _getCsvReportFn(self, tsId: str) -> str:
+        return self._getTmpPath(f'{tsId}.csv')
+
+    def _readCsvreport(self, tsId: str) -> Union[dict, None]:
+        """Reads the corresponding csv file. It looks like this:
+        CurrentIndex,ToBeRemoved,Removed
+        0,True,False
+        1,False,False
+        2,False,False
+        3,True,False
+        4,False,False
+        [...]
+
+        :return resDict: dictionary of keys = indices and values = ToBeRemoved flag.
+        """
+        resDict = None
+        csvFileName = self._getCsvReportFn(tsId)
+        with open(csvFileName, newline='') as csvfile:
+            reader = csv.DictReader(csvfile)
+            resDict = {int(row[CURRENT_INDEX]): row[TO_BE_REMOVED] == "True" for row in reader}
+        if not resDict:
+            logger.error(redStr(f'tsId = {tsId} -> no csv report was found: {csvFileName}'))
+        return resDict
+
     def _getOutTsFileName(self, tsId: str) -> str:
         pattern = f'{tsId}.mrc'
         return  self._getExtraPath(pattern) if  self._getFormValue(RE_STACK_OUT_TS) else self._getTmpPath(pattern)
@@ -213,8 +316,23 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
             f'--angle_start {acq.getAngleMin()}',
             f'--angle_step {acq.getStep()}',
             f'--model "{self._getModelFile()}"',
-            f'--csv_output "{self._getTmpPath()}"'
+            f'--csv_output "{self._getCsvReportFn(tsId)}"'
         ]
         if self._getFormValue(GEN_PDF_REPOS):
             cmd.append(f'--pdf_output "{self._getPdfReportFn(tsId)}"')
         return ' '.join(cmd)
+
+    def _getOutTsSet(self, attrName: str) -> SetOfTiltSeries:
+        inTsSetPointer = self._getTsSet(returnPointer=True)
+        inTsSet = inTsSetPointer.get()
+        suffix = '' if attrName == ArcticOutputs.tiltSeries.name else 'bad'
+        outTsSet = getattr(self, attrName, None)
+        if outTsSet:
+            outTsSet.enableAppend()
+        else:
+            outTsSet = SetOfTiltSeries.create(self._getPath(), template='tiltseries', suffix=suffix)
+            outTsSet.copyInfo(inTsSet)
+            outTsSet.setStreamState(Set.STREAM_OPEN)
+            self._defineOutputs(**{attrName: outTsSet})
+            self._defineSourceRelation(inTsSetPointer, outTsSet)
+        return outTsSet
