@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 # Form variables
 IN_TS_SET = 'inTsSet'
 RE_STACK_OUT_TS = 'reStackOutTsSet'
+NO_GO_PERCENT = 'noGoPercent'
 GEN_PDF_REPOS = 'genPdfRepos'
 MODEL = 'model'
 
@@ -114,7 +115,7 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
                            'level. Otherwise, a new binary will be generated for each tilt-series containing only '
                            'the good tilt-images.')
 
-        form.addParam('noGoPercent', IntParam,
+        form.addParam(NO_GO_PERCENT, IntParam,
                       default=50,
                       label='Allowed percentage of bad tilt-images',
                       validators=[GE(0), LE(100)],
@@ -206,25 +207,29 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
                 # Check the percentage of bad tilt-images
                 nImgs = len(indices)
                 nBadTi = sum(toBeRemovedList)
-                allowedNBadTilts = round(0.01 * self.noGoPercent.get() * nImgs)
+                allowedNBadTilts = round(0.01 * self._getFormValue(NO_GO_PERCENT) * nImgs)
                 if nBadTi > allowedNBadTilts:
                     logger.info(cyanStr(f'tsId = {tsId} -> too many bad tilt-images detected [{nBadTi} > '
                                         f'{allowedNBadTilts}]. Stored as bad tilt-series.'))
                     outTsSet = self._getOutTsSet(attrName=ArcticOutputs.badTiltSeries.name)
-                    outTs = TiltSeries(tsId=tsId)
+                    outTs = TiltSeries()
+                    outTs.copyInfo(ts)
                     outTsSet.append(outTs)
                     # outTsFileName = ts.getFileName()
                     for ti in ts.iterItems():
                         outTi = TiltImage(tsId=tsId)
                         outTi.copyInfo(ti)
                         outTs.append(outTi)
+                    outTs.write()
                     outTsSet.update(outTs)
+                    outTsSet.write()
                     self._store(outTsSet)
                 else:
                     logger.info(cyanStr(f'tsId = {tsId} -> bad tilt-images detected [{nBadTi} <= '
                                         f'{allowedNBadTilts}]. Stored as good tilt-series.'))
                     outTsSet = self._getOutTsSet(attrName=ArcticOutputs.tiltSeries.name)
-                    outTs = TiltSeries(tsId=tsId)
+                    outTs = TiltSeries()
+                    outTs.copyInfo(ts)
                     outTsSet.append(outTs)
                     if self._getFormValue(RE_STACK_OUT_TS):
                         outTsFileName = self._getOutTsFileName(tsId)
@@ -235,18 +240,22 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
                                 outTi.copyInfo(ti)
                                 outTi.setFileName(outTsFileName)
                                 outTs.append(ti)
+                        outTs.write()
                         outTsSet.update(outTs)
+                        outTsSet.write()
                         self._store(outTsSet)
                     else:
-                        outTsFileName = ts.getFileName()
-                        for ind, ti in enumerate(ts.iterItems()):
-                            outTi = TiltImage(tsId=tsId)
-                            outTi.copyInfo(ti)
+                        outTsFileName = ts.getFirstItem().getFileName()
+                        for ind, ti in enumerate(ts.iterItems(orderBy=TiltImage.INDEX_FIELD)):
+                            outTi = TiltImage(tsId)
+                            outTi.copyInfo(ti, copyStatus=False)
+                            outTi.setFileName(outTsFileName)
                             goodTi = not resDict[ind]
                             outTi.setEnabled(goodTi)
-                            outTi.setFileName(outTsFileName)
-                            outTs.append(ti)
+                            outTs.append(outTi)
+                        outTs.write()
                         outTsSet.update(outTs)
+                        outTsSet.write()
                         self._store(outTsSet)
 
     # --------------------------- UTILS functions -----------------------------
