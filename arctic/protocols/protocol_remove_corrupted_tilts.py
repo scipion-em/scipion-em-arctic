@@ -30,7 +30,6 @@ from collections import OrderedDict
 from enum import Enum
 from os.path import join
 from typing import Union
-
 from arctic import Plugin, ARCTIC_REPO_DIRNAME, MODELS_PARENT_DIR
 from arctic.constants import BINARY_MODELS_DIR
 from pwem.protocols import EMProtocol
@@ -38,7 +37,7 @@ from pyworkflow import BETA
 from pyworkflow.object import Pointer, Set
 from pyworkflow.protocol import PointerParam, BooleanParam, LEVEL_ADVANCED, EnumParam, STEPS_PARALLEL, GPU_LIST, \
     StringParam, IntParam, GE, LE
-from pyworkflow.utils import Message, makePath, redStr, cyanStr
+from pyworkflow.utils import Message, makePath, redStr, cyanStr, createLink
 from tomo.objects import SetOfTiltSeries, TiltImage, TiltSeries
 
 logger = logging.getLogger(__name__)
@@ -163,20 +162,21 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
                        label="Choose GPU IDs",
                        help='GPU device/s to be used.')
         form.addParallelSection(threads=1, mpi=0)
-
-    # TODO: add excluded views at the beginning
     # --------------------------- INSERT steps functions ----------------------
     def _insertAllSteps(self):
         self._initialize()
         closeSetStepDeps = []
         for tsId in self.tsDict.keys():
-            runId = self._insertFunctionStep(self.runArctic, tsId,
+            pid1 = self._insertFunctionStep(self.convertInputStep, tsId,
                                              prerequisites=[],
+                                             needsGPU=False)
+            pid2 = self._insertFunctionStep(self.runArctic, tsId,
+                                             prerequisites=pid1,
                                              needsGPU=True)
-            cOutId = self._insertFunctionStep(self.createOutputStep, tsId,
-                                              prerequisites=runId,
+            pid3 = self._insertFunctionStep(self.createOutputStep, tsId,
+                                              prerequisites=pid2,
                                               needsGPU=False)
-            closeSetStepDeps.append(cOutId)
+            closeSetStepDeps.append(pid3)
 
         self._insertFunctionStep(self._closeOutputSet,
                                  prerequisites=closeSetStepDeps,
@@ -188,6 +188,18 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
         if self._getFormValue(GEN_PDF_REPOS):
             makePath(self._getPdfReportDir())
 
+
+    def convertInputStep(self, tsId: str):
+        ts = self.tsDict[tsId]
+        presentAcqOrders = ts.getTsPresentAcqOrders()
+        tsTmpFile = self.getTsTmpFile(tsId)
+        if presentAcqOrders:
+            logger.info(cyanStr(f'tsId = {tsId} -> Excluded views detected in the input tilt-series. Re-stacking '
+                                f'without them...'))
+            ts.applyTransform(tsTmpFile, presentAcqOrders=presentAcqOrders)
+        else:
+            createLink(ts.getFirstItem().getFileName(), tsTmpFile)
+
     def runArctic(self, tsId: str):
         try:
             logger.info(cyanStr(f'tsId = {tsId} -> Running ARCTiC...'))
@@ -197,6 +209,7 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
             logger.error(redStr(f'tsId = {tsId} - Failed to process with exception {e}'))
 
     def createOutputStep(self, tsId: str):
+        # TODO: consider the possible pre-excluded views here
         if tsId not in self.failedTsIds:
             ts = self.tsDict[tsId]
             # Read the corresponding csv file
@@ -215,15 +228,16 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
                     outTs = TiltSeries()
                     outTs.copyInfo(ts)
                     outTsSet.append(outTs)
-                    # outTsFileName = ts.getFileName()
                     for ti in ts.iterItems():
-                        outTi = TiltImage(tsId=tsId)
+                        outTi = TiltImage()
                         outTi.copyInfo(ti)
                         outTs.append(outTi)
+                    # Register the data of the current ts and update the tsSet
                     outTs.write()
                     outTsSet.update(outTs)
                     outTsSet.write()
                     self._store(outTsSet)
+
                 else:
                     logger.info(cyanStr(f'tsId = {tsId} -> bad tilt-images detected [{nBadTi} <= '
                                         f'{allowedNBadTilts}]. Stored as good tilt-series.'))
@@ -233,17 +247,13 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
                     outTsSet.append(outTs)
                     if self._getFormValue(RE_STACK_OUT_TS):
                         outTsFileName = self._getOutTsFileName(tsId)
-                        for ind, ti in enumerate(ts.iterItems()):
+                        for ind, ti in enumerate(ts.iterItems(orderBy=TiltImage.INDEX_FIELD)):
                             goodTi = not resDict[ind]
                             if goodTi:
-                                outTi = TiltImage(tsId=tsId)
+                                outTi = TiltImage()
                                 outTi.copyInfo(ti)
                                 outTi.setFileName(outTsFileName)
                                 outTs.append(ti)
-                        outTs.write()
-                        outTsSet.update(outTs)
-                        outTsSet.write()
-                        self._store(outTsSet)
                     else:
                         outTsFileName = ts.getFirstItem().getFileName()
                         for ind, ti in enumerate(ts.iterItems(orderBy=TiltImage.INDEX_FIELD)):
@@ -253,10 +263,11 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
                             goodTi = not resDict[ind]
                             outTi.setEnabled(goodTi)
                             outTs.append(outTi)
-                        outTs.write()
-                        outTsSet.update(outTs)
-                        outTsSet.write()
-                        self._store(outTsSet)
+                    # Register the data of the current ts and update the tsSet
+                    outTs.write()
+                    outTsSet.update(outTs)
+                    outTsSet.write()
+                    self._store(outTsSet)
 
     # --------------------------- UTILS functions -----------------------------
     def _getFormAttrib(self, attribName) -> Union[Pointer, BooleanParam, EnumParam, None]:
@@ -270,6 +281,9 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
                   returnPointer: bool = False) -> Union[SetOfTiltSeries, None]:
         tsPointer = self._getFormAttrib(IN_TS_SET)
         return tsPointer if returnPointer else tsPointer.get()
+
+    def getTsTmpFile(self, tsId: str) -> str:
+        return self._getTmpPath(f'{tsId}.mrc')
 
     def _getProgram(self) -> str:
         return Plugin.getHome(*[ARCTIC_REPO_DIRNAME, self.program])
@@ -320,7 +334,7 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
         ts = self.tsDict[tsId]
         acq = ts.getAcquisition()
         cmd = [
-            f'--input_ts "{ts.getFirstItem().getFileName()}"',
+            f'--input_ts "{self.getTsTmpFile(tsId)}"',
             f'--cleaned_ts "{self._getOutTsFileName(tsId)}"',
             f'--angle_start {acq.getAngleMin()}',
             f'--angle_step {acq.getStep()}',
