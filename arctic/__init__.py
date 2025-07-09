@@ -25,9 +25,6 @@
 # *
 # **************************************************************************
 import os
-import shutil
-from os.path import exists
-
 import pwem
 from arctic.constants import ARCTIC_CUDA_LIB, V_0_0_1, ARCTIC_ENV_ACTIVATION, ARCTIC_DEFAULT_ACTIVATION_CMD, ARCTIC, \
     ARCTIC_DEFAULT_VERSION, ARCTIC_GIT_REPO_URL, ARCTIC_GIT_COMMIT, ARCTIC_REPO_DIRNAME, ARTCTIC_MODELS_URL, \
