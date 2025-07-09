@@ -263,7 +263,7 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
                             outTi.setFileName(outTsFileName)
                             # Only update the status of the non-excluded views from the input ts,
                             # which are the ones that have been processed by arctic
-                            if ti.getAcqOrder() in presentAcqOrders:
+                            if ti.getAcquisitionOrder() in presentAcqOrders:
                                 goodTi = not resDict[ind]
                                 outTi.setEnabled(goodTi)
                             outTs.append(outTi)
