@@ -198,6 +198,8 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
                                 f'without them...'))
             ts.applyTransform(tsTmpFile, presentAcqOrders=presentAcqOrders)
         else:
+            # This way the input file when calling the program will be located in tmp, allowing extra checking
+            # regarding if a file was re-stacked or not
             createLink(ts.getFirstItem().getFileName(), tsTmpFile)
 
     def runArctic(self, tsId: str):
@@ -256,12 +258,16 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
                                 outTs.append(ti)
                     else:
                         outTsFileName = ts.getFirstItem().getFileName()
+                        presentAcqOrders = ts.getTsPresentAcqOrders()
                         for ind, ti in enumerate(ts.iterItems(orderBy=TiltImage.INDEX_FIELD)):
                             outTi = TiltImage(tsId)
-                            outTi.copyInfo(ti, copyStatus=False)
+                            outTi.copyInfo(ti)
                             outTi.setFileName(outTsFileName)
-                            goodTi = not resDict[ind]
-                            outTi.setEnabled(goodTi)
+                            # Only update the status of the non-excluded views from the input ts,
+                            # which are the ones that have been processed by arctic
+                            if ti.getAcqOrder() in presentAcqOrders:
+                                goodTi = not resDict[ind]
+                                outTi.setEnabled(goodTi)
                             outTs.append(outTi)
                     # Register the data of the current ts and update the tsSet
                     outTs.write()
