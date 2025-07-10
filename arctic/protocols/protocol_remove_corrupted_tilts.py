@@ -87,7 +87,7 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
     in which any of these effects/artifacts is detected: drift, ice reflection, lamella edge
     thick lamella, and contamination. More details in
     https://www.biorxiv.org/content/10.1101/2025.03.13.642992v1."""
-
+#
     _label = 'automated removal of corrupted tilts'
     _devStatus = BETA
     _possibleOutputs = ArcticOutputs
