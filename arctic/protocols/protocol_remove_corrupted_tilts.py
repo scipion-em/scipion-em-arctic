@@ -87,7 +87,7 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
     in which any of these effects/artifacts is detected: drift, ice reflection, lamella edge
     thick lamella, and contamination. More details in
     https://www.biorxiv.org/content/10.1101/2025.03.13.642992v1."""
-#
+
     _label = 'automated removal of corrupted tilts'
     _devStatus = BETA
     _possibleOutputs = ArcticOutputs
@@ -167,11 +167,11 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
         self._initialize()
         closeSetStepDeps = []
         for tsId in self.tsDict.keys():
-            pid1 = self._insertFunctionStep(self.convertInputStep, tsId,
-                                             prerequisites=[],
-                                             needsGPU=False)
+            # pid1 = self._insertFunctionStep(self.convertInputStep, tsId,
+            #                                  prerequisites=[],
+            #                                  needsGPU=False)
             pid2 = self._insertFunctionStep(self.runArctic, tsId,
-                                             prerequisites=pid1,
+                                             prerequisites=[],
                                              needsGPU=True)
             pid3 = self._insertFunctionStep(self.createOutputStep, tsId,
                                               prerequisites=pid2,
@@ -346,7 +346,8 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
         ts = self.tsDict[tsId]
         acq = ts.getAcquisition()
         cmd = [
-            f'--input_ts "{self.getTsTmpFile(tsId)}"',
+            f'--input_ts "{ts.getFirstItem().getFileName()}"',
+            # f'--input_ts "{self.getTsTmpFile(tsId)}"',
             f'--cleaned_ts "{self._getOutTsFileName(tsId)}"',
             f'--angle_start {acq.getAngleMin()}',
             f'--angle_step {acq.getStep()}',
