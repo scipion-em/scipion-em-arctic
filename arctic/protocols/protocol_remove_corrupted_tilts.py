@@ -167,11 +167,11 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
         self._initialize()
         closeSetStepDeps = []
         for tsId in self.tsDict.keys():
-            # pid1 = self._insertFunctionStep(self.convertInputStep, tsId,
-            #                                  prerequisites=[],
-            #                                  needsGPU=False)
-            pid2 = self._insertFunctionStep(self.runArctic, tsId,
+            pid1 = self._insertFunctionStep(self.convertInputStep, tsId,
                                              prerequisites=[],
+                                             needsGPU=False)
+            pid2 = self._insertFunctionStep(self.runArctic, tsId,
+                                             prerequisites=pid1,
                                              needsGPU=True)
             pid3 = self._insertFunctionStep(self.createOutputStep, tsId,
                                               prerequisites=pid2,

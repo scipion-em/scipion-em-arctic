@@ -86,7 +86,8 @@ class Plugin(pwem.Plugin):
         createEnvCmd = f'{cls.getCondaActivationCmd()}'
         createEnvCmd += f'cd {ARCTIC_REPO_DIRNAME} && '
         createEnvCmd += (f" conda env list | grep -qE '^{ARCTIC_ENV_NAME}\s' && "
-                         f"conda env update -f environment.yml || conda env create -f environment.yml && ")
+                         f"conda env update -f environment.yml || "
+                         f"conda env create -n {ARCTIC_ENV_NAME} -f environment.yml && ")
         createEnvCmd += f'cd .. && touch {ARCTIC_CONDA_ENV_CREATED}'
 
         # Download the models
