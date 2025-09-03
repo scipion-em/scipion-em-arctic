@@ -79,14 +79,14 @@ class Plugin(pwem.Plugin):
         cloneCmd = f'[ -d {articClonedRepo} ] && rm -rf {articClonedRepo}; '  # Remove the cloned dir if exists
         cloneCmd += f'git clone {ARCTIC_GIT_REPO_URL} && '
         cloneCmd += f'cd {ARCTIC_REPO_DIRNAME} && '
-        cloneCmd += f'git checkout {ARCTIC_GIT_COMMIT} && '
+        # cloneCmd += f'git checkout {ARCTIC_GIT_COMMIT} && '
         cloneCmd += f'cd .. && touch {ARCTIC_CLONED}'
 
         # Create the environment or update it depending on if it already exists or not
         createEnvCmd = f'{cls.getCondaActivationCmd()}'
         createEnvCmd += f'cd {ARCTIC_REPO_DIRNAME} && '
         createEnvCmd += (f" conda env list | grep -qE '^{ARCTIC_ENV_NAME}\s' && "
-                         f"conda env update -f environment.yml || "
+                         f"conda env update -n {ARCTIC_ENV_NAME} -f environment.yml || "
                          f"conda env create -n {ARCTIC_ENV_NAME} -f environment.yml && ")
         createEnvCmd += f'cd .. && touch {ARCTIC_CONDA_ENV_CREATED}'
 

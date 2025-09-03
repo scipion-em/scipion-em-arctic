@@ -28,8 +28,8 @@ import csv
 import logging
 from collections import OrderedDict
 from enum import Enum
-from os.path import join
-from typing import Union
+from os.path import join, exists
+from typing import Union, Dict
 from arctic import Plugin, ARCTIC_REPO_DIRNAME, MODELS_PARENT_DIR
 from arctic.constants import BINARY_MODELS_DIR
 from pwem.protocols import EMProtocol
@@ -162,6 +162,7 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
                        label="Choose GPU IDs",
                        help='GPU device/s to be used.')
         form.addParallelSection(threads=1, mpi=0)
+
     # --------------------------- INSERT steps functions ----------------------
     def _insertAllSteps(self):
         self._initialize()
@@ -189,19 +190,25 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
             makePath(self._getPdfReportDir())
 
     def convertInputStep(self, tsId: str):
-        ts = self.tsDict[tsId]
-        presentAcqOrders = ts.getTsPresentAcqOrders()
-        tsTmpFile = self.getTsTmpFile(tsId)
-        if presentAcqOrders:
-            logger.info(cyanStr(f'tsId = {tsId} -> Excluded views detected in the input tilt-series. Re-stacking '
-                                f'without them...'))
-            ts.applyTransform(tsTmpFile, presentAcqOrders=presentAcqOrders)
-        else:
-            # This way the input file when calling the program will be located in tmp, allowing extra checking
-            # regarding if a file was re-stacked or not
-            createLink(ts.getFirstItem().getFileName(), tsTmpFile)
+        try:
+            ts = self.tsDict[tsId]
+            tsTmpFile = self.getTsTmpFile(tsId)
+            if ts.hasExcludedViews():
+                logger.info(cyanStr(f'tsId = {tsId} -> Excluded views detected in the input tilt-series. Re-stacking '
+                                    f'without them...'))
+                ts.applyTransform(tsTmpFile)
+            else:
+                # This way the input file when calling the program will be located in tmp, allowing extra checking
+                # regarding if a file was re-stacked or not
+                createLink(ts.getFirstItem().getFileName(), tsTmpFile)
+        except Exception as e:
+            self.failedTsIds.append(tsId)
+            logger.error(redStr(f'tsId = {tsId} -> input conversion failed with the exception -> {e}'))
+
 
     def runArctic(self, tsId: str):
+        if tsId in self.failedTsIds:
+            return
         try:
             logger.info(cyanStr(f'tsId = {tsId} -> Running ARCTiC...'))
             Plugin.runArctic(self, self._getProgram(), self._getArcticCmd(tsId))
@@ -210,68 +217,19 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
             logger.error(redStr(f'tsId = {tsId} - Failed to process with exception {e}'))
 
     def createOutputStep(self, tsId: str):
-        if tsId not in self.failedTsIds:
-            ts = self.tsDict[tsId]
-            # Read the corresponding csv file
-            resDict = self._readCsvreport(tsId)
-            if resDict:
-                indices = resDict.keys()
-                toBeRemovedList = resDict.values()
-                # Check the percentage of bad tilt-images
-                nImgs = len(indices)
-                nBadTi = sum(toBeRemovedList)
-                allowedNBadTilts = round(0.01 * self._getFormValue(NO_GO_PERCENT) * nImgs)
-                if nBadTi > allowedNBadTilts:
-                    logger.info(cyanStr(f'tsId = {tsId} -> too many bad tilt-images detected [{nBadTi} > '
-                                        f'{allowedNBadTilts}]. Stored as bad tilt-series.'))
-                    outTsSet = self._getOutTsSet(attrName=ArcticOutputs.badTiltSeries.name)
-                    outTs = TiltSeries()
-                    outTs.copyInfo(ts)
-                    outTsSet.append(outTs)
-                    for ti in ts.iterItems():
-                        outTi = TiltImage()
-                        outTi.copyInfo(ti)
-                        outTs.append(outTi)
-                    # Register the data of the current ts and update the tsSet
-                    outTs.write()
-                    outTsSet.update(outTs)
-                    outTsSet.write()
-                    self._store(outTsSet)
-
+        if tsId in self.failedTsIds:
+            return
+        try:
+            with self._lock:
+                # Read the corresponding csv file
+                resDict = self._readCsvreport(tsId)
+                if resDict:
+                    self._createOutput(tsId, resDict)
                 else:
-                    logger.info(cyanStr(f'tsId = {tsId} -> bad tilt-images detected [{nBadTi} <= '
-                                        f'{allowedNBadTilts}]. Stored as good tilt-series.'))
-                    outTsSet = self._getOutTsSet(attrName=ArcticOutputs.tiltSeries.name)
-                    outTs = TiltSeries()
-                    outTs.copyInfo(ts)
-                    outTsSet.append(outTs)
-                    if self._getFormValue(RE_STACK_OUT_TS):
-                        outTsFileName = self._getOutTsFileName(tsId)
-                        for ind, ti in enumerate(ts.iterItems(orderBy=TiltImage.INDEX_FIELD)):
-                            goodTi = not resDict[ind]
-                            if goodTi:
-                                outTi = TiltImage()
-                                outTi.copyInfo(ti)
-                                outTi.setFileName(outTsFileName)
-                                outTs.append(ti)
-                    else:
-                        outTsFileName = ts.getFirstItem().getFileName()
-                        presentAcqOrders = ts.getTsPresentAcqOrders()
-                        for ind, ti in enumerate(ts.iterItems(orderBy=TiltImage.INDEX_FIELD)):
-                            outTi = TiltImage(tsId)
-                            outTi.copyInfo(ti)
-                            outTi.setFileName(outTsFileName)
-                            # Only update the status of the non-excluded views from the input ts,
-                            # which are the ones that have been processed by arctic
-                            if ti.getAcquisitionOrder() in presentAcqOrders:
-                                goodTi = not resDict[ind]
-                                outTi.setEnabled(goodTi)
-                            outTs.append(outTi)
-                    # Register the data of the current ts and update the tsSet
-                    outTs.write()
-                    outTsSet.update(outTs)
-                    outTsSet.write()
-                    self._store(outTsSet)
+                    logger.error(redStr(f'tsId = {tsId} -> skipping...'))
+        except Exception as e:
+            logger.error(redStr(f'tsId = {tsId} -> Unable to register the output with exception '
+                                f'{e}. Skipping...'))
 
     def closeOutputSetStep(self):
         outBadTsSet = getattr(self, ArcticOutputs.badTiltSeries.name, None)
@@ -317,7 +275,7 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
     def _getCsvReportFn(self, tsId: str) -> str:
         return self._getTmpPath(f'{tsId}.csv')
 
-    def _readCsvreport(self, tsId: str) -> Union[dict, None]:
+    def _readCsvreport(self, tsId: str) -> Union[Dict[int, bool] , None]:
         """Reads the corresponding csv file. It looks like this:
         CurrentIndex,ToBeRemoved,Removed
         0,True,False
@@ -329,13 +287,13 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
 
         :return resDict: dictionary of keys = indices and values = ToBeRemoved flag.
         """
-        resDict = None
         csvFileName = self._getCsvReportFn(tsId)
+        if not exists(csvFileName):
+            logger.error(redStr(f'tsId = {tsId} -> no csv report was found: {csvFileName}'))
+            return None
         with open(csvFileName, newline='') as csvfile:
             reader = csv.DictReader(csvfile)
             resDict = {int(row[CURRENT_INDEX]): row[TO_BE_REMOVED] == "True" for row in reader}
-        if not resDict:
-            logger.error(redStr(f'tsId = {tsId} -> no csv report was found: {csvFileName}'))
         return resDict
 
     def _getOutTsFileName(self, tsId: str) -> str:
@@ -346,8 +304,8 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
         ts = self.tsDict[tsId]
         acq = ts.getAcquisition()
         cmd = [
-            f'--input_ts "{ts.getFirstItem().getFileName()}"',
-            # f'--input_ts "{self.getTsTmpFile(tsId)}"',
+            # f'--input_ts "{ts.getFirstItem().getFileName()}"',
+            f'--input_ts "{self.getTsTmpFile(tsId)}"',
             f'--cleaned_ts "{self._getOutTsFileName(tsId)}"',
             f'--angle_start {acq.getAngleMin()}',
             f'--angle_step {acq.getStep()}',
@@ -372,3 +330,55 @@ class ProtArcticRemoveCorruptedTilts(EMProtocol):
             self._defineOutputs(**{attrName: outTsSet})
             self._defineSourceRelation(inTsSetPointer, outTsSet)
         return outTsSet
+
+    def _createOutput(self, tsId: str, resDict: Dict[int, bool]):
+        ts = self.tsDict[tsId]
+        indices = resDict.keys()
+        toBeRemovedList = resDict.values()
+        # Check the percentage of bad tilt-images
+        nImgs = len(indices)
+        nBadTi = sum(toBeRemovedList)
+        allowedNBadTilts = round(0.01 * self._getFormValue(NO_GO_PERCENT) * nImgs)
+        # Set of tilt-series
+        outTsSet = self._getOutTsSet(attrName=ArcticOutputs.badTiltSeries.name)
+        outTs = TiltSeries()
+        outTs.copyInfo(ts)
+        outTsSet.append(outTs)
+        # Tilt-series
+        if nBadTi > allowedNBadTilts:
+            logger.info(cyanStr(f'tsId = {tsId} -> too many bad tilt-images detected [{nBadTi} > '
+                                f'{allowedNBadTilts}]. Stored as bad tilt-series.'))
+            for ti in ts.iterItems():
+                outTi = TiltImage()
+                outTi.copyInfo(ti)
+                outTs.append(outTi)
+        else:
+            logger.info(cyanStr(f'tsId = {tsId} -> bad tilt-images detected [{nBadTi} <= '
+                                f'{allowedNBadTilts}]. Stored as good tilt-series.'))
+            if self._getFormValue(RE_STACK_OUT_TS):
+                outTsFileName = self._getOutTsFileName(tsId)
+                for ind, ti in enumerate(ts.iterItems(orderBy=TiltImage.INDEX_FIELD)):
+                    goodTi = not resDict[ind]
+                    if goodTi:
+                        outTi = TiltImage()
+                        outTi.copyInfo(ti)
+                        outTi.setFileName(outTsFileName)
+                        outTs.append(ti)
+            else:
+                outTsFileName = ts.getFirstItem().getFileName()
+                presentAcqOrders = ts.getTsPresentAcqOrders()
+                for ind, ti in enumerate(ts.iterItems(orderBy=TiltImage.INDEX_FIELD)):
+                    outTi = TiltImage(tsId)
+                    outTi.copyInfo(ti)
+                    outTi.setFileName(outTsFileName)
+                    # Only update the status of the non-excluded views from the input ts,
+                    # which are the ones that have been processed by arctic
+                    if ti.getAcquisitionOrder() in presentAcqOrders:
+                        goodTi = not resDict[ind]
+                        outTi.setEnabled(goodTi)
+                    outTs.append(outTi)
+        # Register the data of the current ts and update the tsSet
+        outTs.write()
+        outTsSet.update(outTs)
+        outTsSet.write()
+        self._store(outTsSet)
