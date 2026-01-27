@@ -29,6 +29,8 @@ import pwem
 from arctic.constants import ARCTIC_CUDA_LIB, V_0_0_1, ARCTIC_ENV_ACTIVATION, ARCTIC_DEFAULT_ACTIVATION_CMD, ARCTIC, \
     ARCTIC_DEFAULT_VERSION, ARCTIC_GIT_REPO_URL, ARCTIC_GIT_COMMIT, ARCTIC_REPO_DIRNAME, ARTCTIC_MODELS_URL, \
     ARCTIC_ENV_NAME, MODELS_PARENT_DIR, ARCTIC_HOME
+
+from pyworkflow import TOMO
 from pyworkflow.utils import Environ
 
 __version__ = '3.0.0'
@@ -45,6 +47,7 @@ class Plugin(pwem.Plugin):
     _pathVars = [ARCTIC_CUDA_LIB]
     _supportedVersions = [V_0_0_1]
     _url = "https://github.com/scipion-em/scipion-em-arctic"
+    _processingField = [TOMO]
 
     @classmethod
     def _defineVariables(cls):
