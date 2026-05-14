@@ -83,10 +83,153 @@ class ArcticOutputs(Enum):
 
 
 class ProtArcticRemoveCorruptedTilts(EMProtocol):
-    """Automated Removal of Corrupted Tilts in Cryo-ET. Corrupted tilt-images are the ones
-    in which any of these effects/artifacts is detected: drift, ice reflection, lamella edge
-    thick lamella, and contamination. More details in
-    https://www.biorxiv.org/content/10.1101/2025.03.13.642992v1."""
+    """
+    Performs automated detection and removal of corrupted tilt-images in cryo-electron tomography tilt-series.
+    The protocol identifies acquisition artifacts such as drift, ice reflections, lamella edges, thick lamella
+    regions, and contamination in order to improve the overall quality of tomographic datasets before downstream
+    reconstruction and analysis. Its main purpose is to assist users in cleaning tilt-series in a consistent,
+    reproducible, and scalable manner using deep learning classification models trained specifically for Cryo-ET
+    data quality assessment. More info:
+    https://www.biorxiv.org/content/10.1101/2025.03.13.642992v1
+
+    AI Generated:
+
+    Automated Removal of Corrupted Tilts (ProtArcticRemoveCorruptedTilts) - User Manual
+        Overview
+
+        The Automated Removal of Corrupted Tilts protocol is designed to evaluate Cryo-ET tilt-series and detect
+        tilt-images that are likely to compromise tomographic reconstruction quality. In practical cryo-electron
+        tomography workflows, tilt-series frequently contain images affected by acquisition instabilities,
+        contamination, excessive specimen thickness, charging effects, or geometric artifacts near the lamella edge.
+        These problematic views can strongly reduce reconstruction quality, introduce alignment instability, and
+        obscure biologically meaningful structural information.
+
+        The protocol applies pretrained machine learning models to classify each tilt-image as acceptable or
+        corrupted. The resulting cleaned tilt-series can then be used in downstream processing steps such as tilt
+        alignment, tomographic reconstruction, subtomogram averaging, or segmentation. By automating this quality
+        control stage, the protocol reduces the amount of manual inspection required while promoting reproducibility
+        across large datasets.
+
+        Biological Motivation and Use Cases
+
+        In Cryo-ET experiments, the quality of individual tilt-images can vary significantly across the angular
+        range. High tilt angles are especially vulnerable to low signal-to-noise ratio, ice contamination,
+        specimen thickening, and beam-induced artifacts. Even a relatively small number of severely corrupted
+        views may negatively affect the final tomogram and complicate interpretation of macromolecular structures
+        or cellular environments.
+
+        This protocol is particularly useful in large-scale tomography facilities, high-throughput acquisition
+        campaigns, or screening projects where manual inspection becomes impractical. It is also beneficial when
+        preparing datasets for sensitive downstream analyses such as subtomogram classification, in situ structural
+        biology studies, or quantitative measurements that depend on reconstruction fidelity.
+
+        Input Tilt-Series and Initial Considerations
+
+        The protocol requires a set of tilt-series as input. Existing excluded views present in the input metadata
+        are preserved and respected during processing. Users should ensure that the tilt-series acquisition
+        parameters are properly defined because the angular information is important for interpreting the dataset
+        consistently across the full tilt range.
+
+        Before running the protocol, it is advisable to verify that the tilt-series are already reasonably aligned
+        and organized. The protocol focuses on image quality assessment rather than correcting geometric alignment
+        problems or acquisition metadata inconsistencies.
+
+        Deep Learning Models and Classification Strategy
+
+        Several pretrained models are available for image classification, each providing different balances between
+        computational efficiency and detection sensitivity. Transformer-based architectures generally provide strong
+        overall performance and are particularly effective in distinguishing clean images from corrupted ones. These
+        models are often preferred for demanding biological datasets where preserving high-quality information is
+        critical.
+
+        Lightweight transformer variants offer faster execution and lower computational requirements, making them
+        suitable for exploratory analyses or systems with limited GPU resources. Convolutional neural network models
+        provide robust corrupted-image detection and may perform well in workflows prioritizing conservative
+        filtering strategies.
+
+        From a biological perspective, users should understand that different models may emphasize sensitivity or
+        specificity differently. Conservative models may preserve borderline images that still contain useful signal,
+        whereas aggressive models may remove more questionable views at the risk of discarding partially informative
+        data.
+
+        Handling of Corrupted Tilt-Images
+
+        The protocol supports two principal strategies for handling corrupted images. In metadata-only mode, the
+        original tilt-series binary files remain unchanged while problematic views are marked as excluded in the
+        metadata. This approach preserves the original acquisition files and is generally recommended when users
+        want maximum traceability and compatibility with downstream software that supports excluded-view handling.
+
+        Alternatively, the protocol can generate newly stacked tilt-series containing only the accepted images.
+        This option physically removes corrupted views from the output binary data and may simplify downstream
+        workflows that expect already cleaned stacks. However, users should recognize that re-stacking modifies the
+        original image organization and may complicate later comparisons with the raw acquisition files.
+
+        Threshold for Acceptable Tilt-Series
+
+        A biologically important parameter is the maximum tolerated percentage of corrupted tilt-images within a
+        tilt-series. This threshold determines whether a tilt-series is considered acceptable after cleaning or
+        whether it should instead be flagged as globally problematic.
+
+        For example, a tilt-series containing a small number of excluded images may still produce a reliable
+        tomographic reconstruction, especially if the missing views are distributed across the angular range.
+        Conversely, a dataset with excessive corruption may suffer from strong missing-angle artifacts, alignment
+        instability, or severe reconstruction degradation. The protocol therefore separates severely compromised
+        tilt-series into a dedicated output category so they can be reviewed independently.
+
+        PDF Reports and Dataset Inspection
+
+        The protocol can optionally generate PDF reports summarizing the classification results for each tilt-series.
+        These reports provide a convenient way to visually inspect the distribution of excluded images and evaluate
+        the confidence of the classification results across the angular range.
+
+        In practical biological workflows, these reports are extremely valuable for quality control because they
+        allow users to determine whether the excluded images correspond to expected problematic regions, such as
+        high tilts or contamination events. They also help identify systematic acquisition issues that may affect
+        multiple datasets collected during the same microscope session.
+
+        GPU Usage and Performance Considerations
+
+        Because the protocol relies on deep learning inference, GPU acceleration is strongly recommended for large
+        datasets. High-throughput tomography projects containing hundreds of tilt-series can benefit substantially
+        from GPU execution, particularly when using transformer-based models.
+
+        Users working on smaller exploratory datasets or computationally limited systems may prefer lightweight
+        models that reduce execution time while still providing useful filtering performance. In general, balancing
+        model complexity with dataset size and biological requirements leads to the most efficient workflows.
+
+        Outputs and Biological Interpretation
+
+        The protocol produces cleaned tilt-series together with a separate collection of tilt-series considered too
+        corrupted for reliable downstream use. Acceptable tilt-series preserve the acquisition structure while
+        excluding problematic images according to the selected strategy.
+
+        From a biological interpretation standpoint, users should remember that removing excessive numbers of views
+        can reduce angular coverage and increase reconstruction anisotropy. Therefore, aggressive cleaning should
+        always be balanced against the need to preserve sufficient angular information for accurate tomographic
+        reconstruction.
+
+        Practical Recommendations
+
+        For routine Cryo-ET processing, it is often advisable to begin with a balanced classification model and a
+        moderate tolerance threshold. The resulting outputs should then be inspected visually, especially during
+        early adoption of the protocol or when working with unfamiliar sample types.
+
+        If many biologically meaningful images appear to be removed, users may consider increasing the allowed
+        percentage threshold or selecting a less aggressive model. Conversely, if reconstructed tomograms still
+        exhibit strong artifacts, stricter filtering may improve overall quality.
+
+        In high-quality datasets with relatively homogeneous imaging conditions, metadata-only exclusion is often
+        sufficient. For highly automated downstream pipelines or external software environments, generating cleaned
+        re-stacked tilt-series may simplify integration.
+
+        Final Perspective
+
+        Automated corruption detection in Cryo-ET represents an important step toward scalable and reproducible
+        tomography workflows. By systematically identifying problematic tilt-images, this protocol helps improve
+        reconstruction quality, reduces manual inspection burden, and supports more reliable downstream biological
+        interpretation. Careful selection of classification models, filtering thresholds, and output strategies is
+        essential for balancing data preservation with reconstruction fidelity.
+    """
 
     _label = 'automated removal of corrupted tilts'
     _devStatus = BETA
